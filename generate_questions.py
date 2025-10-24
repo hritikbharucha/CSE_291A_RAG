@@ -129,22 +129,32 @@ if __name__ == '__main__':
         pad_token_id=tokenizer.pad_token_id,
     )
 
-    PROMPT_TEMPLATE = """You are creating **retrieval-targeted** questions for a RAG benchmark.
+    PROMPT_TEMPLATE = """You are creating **retrieval-focused** questions for a RAG benchmark.
 
-    Given this news article:
+    Given the following news article:
     <context>
     {article}
     </context>
 
-    Write ONE realistic question that **requires retrieving a specific span** from the article.
-    Strict rules (must follow all):
-    - Include **at least two concrete anchors** from the article (e.g., a PERSON/ORG and a DATE/NUMBER/LOCATION).
-    - The answer should be a **short text span** (a name, date, figure, place, or short clause), not an opinion or summary.
-    - **No vague prompts** like "main idea", "impact", "implications", "significance", or "why is this important".
-    - **Not answerable from the title alone** or from general knowledge; it must depend on details in the body text.
-    - Use **one sentence**, 12–30 words.
+    The relevant supporting span is:
+    <span>
+    {chunk}
+    </span>
 
-    Output ONLY the question inside <box>...</box>, nothing else.
+    Write ONE realistic question that can be answered using ONLY the above span or nearby context in the article.
+
+    Strict rules (follow ALL carefully):
+    - The question must be fully answerable from the span (or immediate surrounding context), with no external knowledge required.
+    - Include at least two concrete anchors from the article (e.g., a PERSON/ORG and a DATE/NUMBER/LOCATION).
+    - The expected answer must be a short factual span (name, date, figure, place, or short clause) — not a summary or opinion.
+    - Do not ask vague questions such as: main idea, impact, implications, significance, or why is this important.
+    - Do not ask about information that is not explicitly stated in the text.
+    - The question must be one sentence, 12–30 words long.
+    - Double-check that the correct answer is visible in the given span.
+
+    Output format:
+    <box>your question here</box>
+    Only output the question, nothing else.
     """
 
     print("Generating retrieval queries...")
@@ -177,9 +187,14 @@ if __name__ == '__main__':
     with open(out_path, "w", encoding="utf-8") as f_out:
         for idx, (doc_id, doc_info) in enumerate(tqdm(all_retrieved_docs.items(), total=len(all_retrieved_docs))):
             try:
-                article = doc_info["doc"]
+                # article = doc_info["doc"]
+                # article_trim = truncate_article(article, max_chars=args.max_article_chars)
+                chunk = doc_info["doc"]
+                article_id = doc_info["article_id"]
+                article = my_rag.database.fetch_article(article_id)
                 article_trim = truncate_article(article, max_chars=args.max_article_chars)
-                prompt = PROMPT_TEMPLATE.format(article=article_trim)
+
+                prompt = PROMPT_TEMPLATE.format(article=article_trim, chunk=chunk)
 
                 gen = generator(prompt)[0]["generated_text"]
                 question = extract_box(gen)
@@ -194,20 +209,16 @@ if __name__ == '__main__':
 
                 record = {
                     "id": int(doc_id),
+                    "article_id": article_id,
                     "question": question,
-                    "content": article
+                    "content": article,
+                    "chunk": chunk,
                 }
                 success_cnt += 1
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
             except Exception as e:
-                # record = {
-                #     "id": int(doc_id),
-                #     "question": "What key event does this article describe?",
-                #     "content": doc_info["doc"],
-                #     "error": str(e),
-                # }
-                # f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
-                pass # skip this examples
+                print(e)
+                pass
 
     print(f"Successfully generated {success_cnt} questions out of {args.num_samples} requests")
     print("Done.")
