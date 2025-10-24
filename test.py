@@ -233,7 +233,7 @@ if __name__ == '__main__':
         embedding_model=SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2"),
         rag_searcher=rag.FAISSRAGSearcher(384),
         dimension=384,
-        cache_size=1000,
+        cache_size=0,
         db_dir="./data",
         db_name="docs",
     )
