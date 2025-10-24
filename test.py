@@ -54,6 +54,8 @@ def test_retrieval_accuracy():
         total += 1
 
         # print(f"gt_id: {gt_idx}, query: {query}, top1_rslt: {top1_rslts.keys()}, top5_rslts: {top5_rslts.keys()}")
+        # print(f"gt_article_id: {gt_article_id}, query: {query}, "
+        #       f"article_top1_rslt: {top1_article_id}, article_top5_rslts: {top5_article_id}")
         pbar.set_description(
             desc=f"top1_acc: {chunk_top1_acc/total:.4f}, top5_acc: {chunk_top5_acc/total:.4f} "
                  f"top1_acc_article: {article_top1_acc/total:.4f}, top5_acc_article: {article_top5_acc/total:.4f}")

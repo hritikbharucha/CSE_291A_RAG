@@ -33,7 +33,7 @@ if __name__ == '__main__':
         rag_searcher = rag.FAISSRAGSearcher(384),
         dimension = 384,
         cache_size = 0, # don't need cache size in the init
-        db_dir = data_dir,
+        db_dir = './data',
         db_name = "docs",
         new_db=True
     )

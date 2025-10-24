@@ -76,7 +76,7 @@ class DocStore:
                 ON docs(access_dt DESC, access_freq DESC, id ASC);
             """)
 
-    def insert_docs(self, records: List[Dict[str, Any]]):
+    def insert_docs(self, records: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
         article_ids, articles, metas = zip(*(
             (r["article_id"], r["doc"], r["meta"]) for r in records
         ))
@@ -134,11 +134,12 @@ class DocStore:
                         compute_doc_hash(doc_chunk)
                     )
                 )
-                new_rows[cur.lastrowid] = {
-                    "doc": doc_chunk,
-                    "meta": meta,
-                    "article_id": article_id
-                }
+                if cur.lastrowid is not None:
+                    new_rows[cur.lastrowid] = {
+                        "doc": doc_chunk,
+                        "meta": meta,
+                        "article_id": article_id
+                    }
         return new_rows
 
     # Does not have any case for update so far
