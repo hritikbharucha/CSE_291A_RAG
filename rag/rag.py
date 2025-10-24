@@ -9,35 +9,40 @@ from .database import *
 class RAG:
     def __init__(self,
                  embedding_model: nn.Module, rag_searcher: RAGSearcher,
-                 cache_size: int, db_dir: str = None, db_name: str = None, new_db = False,
+                 cache_size: int, db_dir: str = "data", db_name: str = "docs", new_db = False,
     **kwargs):
         self.database = None
         self.embedding_model = embedding_model
         self.rag_searcher = rag_searcher
         self.lru_cache = LRUCache(capacity=cache_size)
         self.cache_size = cache_size
-
-        if db_dir is not None and (not new_db):
-            self.load(db_dir, db_name)
-        else:
-            self.database = DocStore()
-            self.database.init_schema()
-            self.load_from_db()
-            self.db_name = "docs"
-            self.db_dir = "data"
+        self.db_dir = db_dir
+        self.db_name = db_name
+        self.load(db_dir, db_name)
 
     def load(self, load_dir: str, db_name: str=None):
-        assert os.path.exists(load_dir)
-        assert os.path.isdir(load_dir)
-        assert os.path.exists(os.path.join(load_dir, "index"))
-        assert os.path.exists(os.path.join(load_dir, f"{db_name}.sqlite"))
+        if os.path.exists(load_dir):
+            assert os.path.isdir(load_dir)
+        else:
+            os.makedirs(load_dir)
 
         print("loading database")
-        self.db_dir = load_dir
-        self.database = DocStore(os.path.join(load_dir, f"{db_name}.sqlite"))
-        self.db_name = "docs"
-        self.rag_searcher.load(path=os.path.join(load_dir, "index"))
-        print("database loaded")
+        if os.path.exists(os.path.join(load_dir, f"{db_name}.sqlite")):
+            self.db_dir = load_dir
+            self.database = DocStore(os.path.join(load_dir, f"{db_name}.sqlite"))
+            print("database loaded")
+        else:
+            self.database = DocStore()
+            print("new database")
+        # no matter what, init it; if exists, this line do nothing
+        self.database.init_schema()
+
+        if os.path.exists(os.path.join(load_dir, "index")):
+            self.db_name = "docs"
+            self.rag_searcher.load(path=os.path.join(load_dir, "index"))
+            print("indexing loaded")
+
+
 
     def load_from_db(self):
         rows = self.database.top_hot(limit=self.cache_size)
@@ -50,6 +55,7 @@ class RAG:
 
     def save(self):
         self.rag_searcher.save(path=os.path.join(self.db_dir, "index"))
+        print(f"indexing saved to {os.path.join(self.db_dir, 'index')}")
         # database should be already updated everytime we use
 
     def add(self, documents: List[str], article_ids: List[str], metadata: List[Dict]=None):
@@ -59,26 +65,30 @@ class RAG:
         if metadata is None:
             metadata = [{} for _ in documents]
 
-        embeddings = self.embedding_model.encode(documents)
+        rows = [{"doc": doc, "meta": meta, "article_id": article_id} for doc, meta, article_id in zip(documents, metadata, article_ids)]
+        db_inserted_rows = self.database.insert_docs(rows)
+        indices = sorted(db_inserted_rows.keys())
+        
+        cnt = 0
+        while len(self.lru_cache._od) < self.cache_size and cnt < len(db_inserted_rows):
+            self.lru_cache.put(
+                indices[cnt], {
+                    "doc": db_inserted_rows[cnt]['doc'],
+                    "meta": db_inserted_rows[cnt]['meta'],
+                    "article_id": db_inserted_rows[cnt]['article_id']
+                })
+            cnt += 1
+
+        print(f"Added {len(documents)} documents .")
+        print(f"Added {len(db_inserted_rows)} chunks")
+
+        chunks = [db_inserted_rows[idx]['doc'] for idx in indices]
+
+        embeddings = self.embedding_model.encode(chunks)
         if type(embeddings) is torch.Tensor:
             embeddings = embeddings.detach().cpu().numpy()
 
         self.rag_searcher.add(embeddings)
-
-        rows = [{"doc": doc, "meta": meta, "article_id": article_id} for doc, meta, article_id in zip(documents, metadata, article_ids)]
-        db_ids = self.database.insert_docs(rows)
-        
-        if isinstance(db_ids, dict):
-            db_id_list = list(db_ids.keys())
-        else:
-            db_id_list = db_ids
-        
-        idx = 0
-        while len(self.lru_cache._od) < self.cache_size and idx < len(db_id_list):
-            self.lru_cache.put(db_id_list[idx], {"doc": documents[idx], "meta": metadata[idx], "article_id": article_ids[idx]})
-            idx += 1
-
-        print(f"Added {len(documents)} documents.")
 
     def retrieve(self, queries: List[str], top_k: int) -> Dict[int, Dict[str, Any]]:
         queries = self.embedding_model.encode(queries)
