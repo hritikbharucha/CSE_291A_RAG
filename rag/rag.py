@@ -45,13 +45,14 @@ class RAG:
             id = row["id"]
             doc = row["doc"]
             meta = row["meta"]
-            self.lru_cache.put(id, {"doc": doc, "meta": meta})
+            article_id = row["article_id"]
+            self.lru_cache.put(id, {"doc": doc, "meta": meta, "article_id": article_id})
 
     def save(self):
         self.rag_searcher.save(path=os.path.join(self.db_dir, "index"))
-        # database should be updated everytime we use
+        # database should be already updated everytime we use
 
-    def add(self, documents: List[str], metadata: List[Dict]=None):
+    def add(self, documents: List[str], article_ids: List[str], metadata: List[Dict]=None):
         if not documents:  # Handle empty list
             return
             
@@ -64,19 +65,17 @@ class RAG:
 
         self.rag_searcher.add(embeddings)
 
-        rows = [{"doc": doc, "meta": meta} for doc, meta in zip(documents, metadata)]
+        rows = [{"doc": doc, "meta": meta, "article_id": article_id} for doc, meta, article_id in zip(documents, metadata, article_ids)]
         db_ids = self.database.insert_docs(rows)
         
-        # Fix: Handle dict return type properly
         if isinstance(db_ids, dict):
             db_id_list = list(db_ids.keys())
         else:
             db_id_list = db_ids
         
-        # Fix: Add bounds checking
         idx = 0
         while len(self.lru_cache._od) < self.cache_size and idx < len(db_id_list):
-            self.lru_cache.put(db_id_list[idx], {"doc": documents[idx], "meta": metadata[idx]})
+            self.lru_cache.put(db_id_list[idx], {"doc": documents[idx], "meta": metadata[idx], "article_id": article_ids[idx]})
             idx += 1
 
         print(f"Added {len(documents)} documents.")
@@ -89,7 +88,7 @@ class RAG:
         cache_rslts, misses = self.lru_cache.get_many(indices_list)
         db_rslts = {}
         if len(misses) > 0:
-            db_rslts = self.database.fetch_docs(misses)
+            db_rslts = self.database.fetch_chunks(misses)
             self.lru_cache.put_many(db_rslts)
         return {**db_rslts, **cache_rslts}
 
