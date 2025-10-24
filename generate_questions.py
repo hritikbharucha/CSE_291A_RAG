@@ -157,12 +157,8 @@ if __name__ == '__main__':
     for query in tqdm(retrieval_queries, desc="Retrieving documents"):
         if doc_count >= args.num_samples:
             break
-            
-        query_embedding = my_rag.embedding_model.encode([query])
-        if isinstance(query_embedding, torch.Tensor):
-            query_embedding = query_embedding.detach().cpu().numpy()
-        
-        retrieved_docs = my_rag.retrieve(query_embedding, top_k=args.top_k)
+
+        retrieved_docs = my_rag.retrieve([query], top_k=args.top_k)
         
         for doc_id, doc_info in retrieved_docs.items():
             if doc_id not in all_retrieved_docs and doc_count < args.num_samples:
