@@ -142,23 +142,31 @@ if __name__ == '__main__':
         pad_token_id=tokenizer.pad_token_id,
     )
 
-    PROMPT_TEMPLATE = """You are creating **retrieval-targeted** questions for a RAG benchmark.
+    PROMPT_TEMPLATE = """You are generating **retrieval-focused yes/no questions** for a RAG benchmark.
 
-    Given this news article:
     <context>
     {article}
     </context>
 
-    Write ONE realistic question that **requires retrieving a specific span** from the article.
-    Strict rules (must follow all):
-    - Include **at least two concrete anchors** from the article (e.g., a PERSON/ORG and a DATE/NUMBER/LOCATION).
-    - The generated question should be a yes-or-no question.
-    - **No vague prompts** like "main idea", "impact", "implications", "significance", or "why is this important".
-    - **Not answerable from the title alone** or from general knowledge; it must depend on details in the body text.
-    - Use **one sentence**, 12–30 words.
+    Relevant supporting span:
+    <span>
+    {chunk}
+    </span>
 
-    Output ONLY the question inside <question>...</question> and the answer inside <answer>...</answer>, nothing else. 
-    Inside <answer>...</answer>, it should ONLY be "yes" or "no" in lower letters.
+    Write ONE yes/no question that can be answered using ONLY the above span or immediate surrounding context.
+
+    Strict rules (follow ALL):
+    - The question must be fully answerable from the span. Do not ask about anything not explicitly stated.
+    - The question must be a yes/no question. The answer must be exactly "yes" or "no" (lowercase).
+    - Include at least two concrete anchors from the article (e.g., a PERSON/ORG and a DATE/NUMBER/LOCATION).
+    - Avoid vague or abstract prompts (e.g., “main idea,” “impact,” “significance”).
+    - The question must not be answerable from the title alone or general knowledge.
+    - Use one sentence, 12–30 words.
+
+    Output format:
+    <question>your question here</question>
+    <answer>yes or no</answer>
+    Only output these tags and nothing else.
     """
 
     print("Generating retrieval queries...")
@@ -191,9 +199,14 @@ if __name__ == '__main__':
     with open(out_path, "w", encoding="utf-8") as f_out:
         for idx, (doc_id, doc_info) in enumerate(tqdm(all_retrieved_docs.items(), total=len(all_retrieved_docs))):
             try:
-                article = doc_info["doc"]
+                # article = doc_info["doc"]
+                # article_trim = truncate_article(article, max_chars=args.max_article_chars)
+                chunk = doc_info["doc"]
+                article_id = doc_info["article_id"]
+                article = my_rag.database.fetch_article(article_id)
                 article_trim = truncate_article(article, max_chars=args.max_article_chars)
-                prompt = PROMPT_TEMPLATE.format(article=article_trim)
+
+                prompt = PROMPT_TEMPLATE.format(article=article_trim, chunk=chunk)
 
                 gen = generator(prompt)[0]["generated_text"]
                 question = extract_question(gen)
@@ -209,9 +222,11 @@ if __name__ == '__main__':
 
                 record = {
                     "id": int(doc_id),
+                    "article_id": article_id,
                     "question": question,
                     "answer": answer,
-                    "content": article
+                    "content": article,
+                    "chunk": chunk,
                 }
                 success_cnt += 1
                 f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -223,6 +238,7 @@ if __name__ == '__main__':
                 #     "error": str(e),
                 # }
                 # f_out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                print(e)
                 pass # skip this examples
 
     print(f"Successfully generated {success_cnt} questions out of {args.num_samples} requests")

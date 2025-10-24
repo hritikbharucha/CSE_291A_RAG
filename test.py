@@ -29,24 +29,36 @@ def clean_letters_only(text: str) -> str:
 
 def test_retrieval_accuracy():
     df = pd.read_json(args.query_file, lines=True)
-    top1_acc = 0
-    top5_acc = 0
+    chunk_top1_acc = 0
+    chunk_top5_acc = 0
+    article_top1_acc = 0
+    article_top5_acc = 0
     total = 0
     pbar = tqdm.tqdm(df.iterrows(), total=len(df))
     for index, row in pbar:
         query = row["question"]
         gt_idx = row["id"] - 1
+        gt_article_id = row["article_id"]
 
         top1_rslts = my_rag.retrieve([query], 1)
         top5_rslts = my_rag.retrieve([query], 5)
-        top1_acc += 1 if gt_idx in top1_rslts.keys() else 0
-        top5_acc += 1 if gt_idx in top5_rslts.keys() else 0
+
+        chunk_top1_acc += 1 if gt_idx in top1_rslts.keys() else 0
+        chunk_top5_acc += 1 if gt_idx in top5_rslts.keys() else 0
+
+        top1_article_id = [top1_rslts[key]["article_id"] for key in top1_rslts]
+        top5_article_id = [top5_rslts[key]["article_id"] for key in top5_rslts]
+        article_top1_acc += 1 if gt_article_id in top1_article_id else 0
+        article_top5_acc += 1 if gt_article_id in top5_article_id else 0
+
         total += 1
 
         # print(f"gt_id: {gt_idx}, query: {query}, top1_rslt: {top1_rslts.keys()}, top5_rslts: {top5_rslts.keys()}")
-        pbar.set_description(desc=f"top1_acc: {top1_acc/total:.4f}, top5_acc: {top5_acc/total:.4f}")
+        pbar.set_description(
+            desc=f"top1_acc: {chunk_top1_acc/total:.4f}, top5_acc: {chunk_top5_acc/total:.4f} "
+                 f"top1_acc_article: {article_top1_acc/total:.4f}, top5_acc_article: {article_top5_acc/total:.4f}")
 
-    print(f"Top-1 acc: {top1_acc / len(df)}, Top-5 acc: {top5_acc / len(df)}")
+    print(f"Top-1 acc: {chunk_top1_acc / len(df)}, Top-5 acc: {chunk_top5_acc / len(df)}, Article Top-1 acc: {article_top1_acc/total}, Top-5 acc: {article_top5_acc/total}")
 
 def test_retrieval_quality_baseline():
     print(f"Loading model {args.llm}...")
@@ -129,7 +141,7 @@ def test_retrieval_quality_baseline():
     if invalid_preds:
         print(f"Note: {invalid_preds} predictions were invalid (not 'yes'/'no') and excluded from PR/F1.")
 
-def test_retrieval_quality(topk=1):
+def test_retrieval_quality(topk=5):
     print(f"Loading model {args.llm}...")
     tokenizer = AutoTokenizer.from_pretrained(args.llm)
     if tokenizer.pad_token is None:

@@ -89,7 +89,9 @@ Optional parameters:
     * `rating.csv`
     * `raw-data.csv`
 * MultiHopRAG (https://huggingface.co/datasets/yixuantt/MultiHopRAG)
-  * TODO: still need to add
+  * `wget https://huggingface.co/datasets/yixuantt/MultiHopRAG/resolve/main/corpus.json`
+  * save it to `data/MultiHopDataset/`
+    * ``
 * Mediastack API ([https://mediastack.com/?gad\_source=1&gad\_campaignid=23054758303&gbraid=0AAAAAotyZs745QPt2sH2kfboxZHRuAWAr&gclid=CjwKCAjwgeLHBhBuEiwAL5gNESpMO3B0sTIFpnS00Y92zhK4\_uc3zNTzJ62-GIdZL5SkPYBfYYlDGRoCu-YQAvD\_BwE](https://mediastack.com/?gad_source=1&gad_campaignid=23054758303&gbraid=0AAAAAotyZs745QPt2sH2kfboxZHRuAWAr&gclid=CjwKCAjwgeLHBhBuEiwAL5gNESpMO3B0sTIFpnS00Y92zhK4_uc3zNTzJ62-GIdZL5SkPYBfYYlDGRoCu-YQAvD_BwE))
   * TODO: still need to add
 * More (Some other pdf, or other type of dataset to be considered)
