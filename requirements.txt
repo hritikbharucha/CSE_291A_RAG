@@ -6,6 +6,7 @@ sentence-transformers
 torch
 accelerate
 pyarrow
+open-rag-eval
 
 faiss-cpu
 # faiss-gpu; sys_platform == "linux"

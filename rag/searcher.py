@@ -1,5 +1,6 @@
 import faiss
 import numpy as np
+import os
 from typing import List, Tuple, Dict
 
 class RAGSearcher:
@@ -33,7 +34,16 @@ class FAISSRAGSearcher(RAGSearcher):
         return distances, indices
 
     def load(self, path: str):
-        self.index = faiss.read_index(path)
+        if os.path.isdir(path):
+            index_file = os.path.join(path, "faiss.index")
+        else:
+            index_file = path
+        self.index = faiss.read_index(index_file)
 
     def save(self, path: str):
-        faiss.write_index(self.index, path)
+        if os.path.isdir(path) or not path.endswith('.index'):
+            os.makedirs(path, exist_ok=True)
+            index_file = os.path.join(path, "faiss.index")
+        else:
+            index_file = path
+        faiss.write_index(self.index, index_file)
