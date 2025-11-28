@@ -124,7 +124,7 @@ def run_openrag_eval(args):
         query = str(row["question"])
         
         try:
-            gt_chunk_id = int(row["id"]) - 1  # convert to 0-indexed
+            gt_chunk_id = int(row["id"])  # Database IDs are 1-indexed, no need to subtract 1
         except (KeyError, ValueError, TypeError):
             gt_chunk_id = None
         try:
