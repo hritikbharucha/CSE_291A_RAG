@@ -13,8 +13,21 @@ pip install -r requirements.txt
 2. Set up the database:
 
 ```bash
-bash db_set_up.sh
+bash set_up.sh
 ```
+
+3. (Optional) Clean up generated files to start fresh:
+
+```bash
+bash clean_up.sh
+```
+
+This will remove:
+- Database files (`data/docs.sqlite`)
+- Index files (`data/index/`)
+- Generated question files (`mock_requests.jsonl`, `mock_yes_or_no_requests.jsonl`, etc.)
+- Output directories (`openrag_output/`, `multihop_output/`)
+- Python cache files (`__pycache__/`)
 
 ## Usage
 
@@ -55,7 +68,9 @@ Optional parameters:
 Test retrieval accuracy and quality:
 
 ```bash
-python test.py
+python test.py;
+python test_openrag.py --query_file mock_requests.jsonl --top_k 10;
+python test_multihop.py --query_file mock_requests.jsonl --top_k 5 --do_retrieval;
 ```
 
 Test modes:
@@ -78,8 +93,11 @@ Optional parameters:
 - `generate_questions.py`: Generate open-ended questions
 - `generate_yes_or_no_questions.py`: Generate yes/no questions
 - `test.py`: Test retrieval accuracy and quality
+- `test_openrag.py`: Test retrieval metrics based on OpenRAG's measurement
+- `test_multihop.py`: Test retrieval + QA evaluation with MultiHop code
 - `add_global_news_to_database.py`: Add news articles to database
-- `db_set_up.sh`: Database setup script
+- `set_up.sh`: Database setup script
+- `clean_up.sh`: Cleanup script to remove generated files
 
 ## Datasets
 
