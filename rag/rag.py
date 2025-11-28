@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import os
+import numpy as np
 from .lru_cache import LRUCache
 from .searcher import *
 from .database import *
@@ -88,7 +89,8 @@ class RAG:
         if type(embeddings) is torch.Tensor:
             embeddings = embeddings.detach().cpu().numpy()
 
-        self.rag_searcher.add(embeddings)
+        # Pass database IDs to maintain mapping between FAISS positions and database IDs
+        self.rag_searcher.add(embeddings, db_ids=indices)
 
     def retrieve(self, queries: List[str], top_k: int) -> Dict[int, Dict[str, Any]]:
         queries = self.embedding_model.encode(queries)

@@ -37,7 +37,7 @@ def test_retrieval_accuracy():
     pbar = tqdm.tqdm(df.iterrows(), total=len(df))
     for index, row in pbar:
         query = row["question"]
-        gt_idx = row["id"] - 1
+        gt_idx = row["id"]  # Database IDs are 1-indexed, no need to subtract 1
         gt_article_id = row["article_id"]
 
         top1_rslts = my_rag.retrieve([query], 1)
@@ -192,7 +192,7 @@ def test_retrieval_quality(topk=5):
         answer = row["answer"]
 
         article = my_rag.retrieve([query], topk)
-        article = "/n".join([article[key]['doc'] for key in article.keys()])  # keep as-is
+        article = "\n".join([article[key]['doc'] for key in article.keys()])  # keep as-is
         prompt = PROMPT_TEMPLATE.format(article=article, question=query)
         gen = generator(prompt)[0]["generated_text"]
         llm_answer = extract_box(gen)
