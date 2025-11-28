@@ -125,7 +125,7 @@ def main(args):
         # prepare retrieval data or use provided file
         if args.retrieval_results and os.path.exists(args.retrieval_results):
             retrieval_results_path = Path(args.retrieval_results)
-            print(f"\n[MultiHop] Using existing retrieval results: {retrieval_results_path}")
+            print(f"\nUsing existing retrieval results: {retrieval_results_path}")
         else:
             retrieval_results_path = prepare_multihop_retrieval_data(args)
         
