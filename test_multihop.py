@@ -6,22 +6,127 @@ import json
 import pandas as pd
 import tqdm
 import rag.rag as rag
-from sentence_transformers import SentenceTransformer
+from rag.provider_factory import create_embedding_provider, create_vector_search_provider, create_llm_provider
+from rag.aws_config import get_aws_region, get_bedrock_embedding_model, get_bedrock_llm_model
 from pathlib import Path
+import re
+
+def extract_box(text: str) -> str:
+    matches = re.findall(r"<box>\s*(.*?)\s*</box>", text, flags=re.DOTALL | re.IGNORECASE)
+    if matches:
+        # return the first match
+        return matches[-1].strip()
+
+    cleaned = re.sub(r"<[^>]+>", "", text).strip()
+    for line in cleaned.splitlines():
+        s = line.strip()
+        if s:
+            return s
+    return cleaned
+
+def _initialize_rag_system(args):
+    """Helper function to initialize the RAG system"""
+    print(f"Loading RAG system from {args.db_dir}...")
+    
+    # Get AWS region
+    aws_region = get_aws_region(args.aws_region)
+    
+    # Resolve model names for Bedrock
+    if args.embedding_provider == "bedrock":
+        embedding_model_name = get_bedrock_embedding_model(args.embedding_model)
+    else:
+        embedding_model_name = args.embedding_model
+    
+    # Create providers
+    embedding_provider = create_embedding_provider(
+        provider_type=args.embedding_provider,
+        model_name=embedding_model_name,
+        dimension=args.dimension,
+        region_name=aws_region
+    )
+    
+    vector_search_provider = create_vector_search_provider(
+        provider_type=args.vector_search_provider,
+        dimension=args.dimension,
+        endpoint=args.opensearch_endpoint,
+        region_name=aws_region
+    )
+    
+    my_rag = rag.RAG(
+        embedding_model=embedding_provider,
+        rag_searcher=vector_search_provider,
+        cache_size=args.cache_size,
+        db_dir=args.db_dir,
+        db_name=args.db_name,
+    )
+    
+    return my_rag
+
+
+def prepare_multihop_retrieval_data_from_dataset(args):
+    print("Preparing retrieval data for MultiHop-RAG evaluation using official dataset")
+    
+    my_rag = _initialize_rag_system(args)
+    
+    # load MultiHop-RAG queries from the official dataset
+    multihop_query_file = os.path.join(args.multihop_root, "dataset", "MultiHopRAG.json")
+    if not os.path.exists(multihop_query_file):
+        raise FileNotFoundError(
+            f"MultiHop-RAG dataset not found at {multihop_query_file}. "
+            f"Please ensure the MultiHop-RAG repository is properly set up."
+        )
+    
+    print(f"Loading queries from {multihop_query_file}...")
+    with open(multihop_query_file, 'r') as f:
+        query_data = json.load(f)
+    
+    print(f"Loaded {len(query_data)} multi-hop queries from MultiHop-RAG dataset")
+    
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    results = []
+    pbar = tqdm.tqdm(query_data, desc="Retrieving documents")
+    
+    for data in pbar:
+        query = data['query']
+        
+        retrieved = my_rag.retrieve([query], args.top_k)
+        
+        retrieval_list = []
+        for chunk_id, chunk_info in retrieved.items():
+            retrieval_list.append({
+                "text": chunk_info['doc']
+            })
+        
+        gold_list = []
+        for evidence in data.get('evidence_list', []):
+            gold_list.append({
+                "fact": evidence['fact']
+            })
+        
+        result = {
+            "query": query,
+            "question_type": data.get("question_type", "retrieval_query"),
+            "retrieval_list": retrieval_list,
+            "gold_list": gold_list,
+        }
+        results.append(result)
+    
+    json_path = output_dir / "multihop_retrieval_results.json"
+    with open(json_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved retrieval results to {json_path}")
+    print(f"Total queries processed: {len(results)}")
+    print(f"Average evidence facts per query: {sum(len(r['gold_list']) for r in results) / len(results):.2f}")
+    
+    return json_path
 
 
 def prepare_multihop_retrieval_data(args):
     print("Preparing retrieval data for MultiHop-RAG evaluation")
     
-    print(f"Loading RAG system from {args.db_dir}...")
-    my_rag = rag.RAG(
-        embedding_model=SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2"),
-        rag_searcher=rag.FAISSRAGSearcher(384),
-        dimension=384,
-        cache_size=args.cache_size,
-        db_dir=args.db_dir,
-        db_name=args.db_name,
-    )
+    my_rag = _initialize_rag_system(args)
     
     print(f"Loading queries from {args.query_file}...")
     df = pd.read_json(args.query_file, lines=True)
@@ -92,6 +197,129 @@ def prepare_multihop_retrieval_data(args):
     return json_path
 
 
+def generate_qa_answers_from_dataset(args):
+    print("Generating Q&A answers for MultiHop-RAG evaluation")
+    
+    my_rag = _initialize_rag_system(args)
+    
+    # Get AWS region
+    aws_region = get_aws_region(args.aws_region)
+    
+    # Resolve model names for Bedrock
+    if args.llm_provider == "bedrock":
+        llm_model_name = get_bedrock_llm_model(args.llm_model)
+    else:
+        llm_model_name = args.llm_model
+    
+    print(f"Loading LLM model {llm_model_name}...")
+    llm_provider = create_llm_provider(
+        provider_type=args.llm_provider,
+        model_name=llm_model_name,
+        region_name=aws_region
+    )
+    
+    multihop_query_file = os.path.join(args.multihop_root, "dataset", "MultiHopRAG.json")
+    if not os.path.exists(multihop_query_file):
+        raise FileNotFoundError(
+            f"MultiHop-RAG dataset not found at {multihop_query_file}. "
+            f"Please ensure the MultiHop-RAG repository is properly set up."
+        )
+    
+    print(f"Loading queries from {multihop_query_file}...")
+    with open(multihop_query_file, 'r') as f:
+        query_data = json.load(f)
+    
+    print(f"Loaded {len(query_data)} multi-hop queries from MultiHop-RAG dataset")
+    
+    retrieval_results_path = None
+    if args.retrieval_results and os.path.exists(args.retrieval_results):
+        print(f"Loading retrieval results from {args.retrieval_results}...")
+        with open(args.retrieval_results, 'r') as f:
+            retrieval_data = {item['query']: item for item in json.load(f)}
+        retrieval_results_path = Path(args.retrieval_results)
+    else:
+        print("No retrieval results provided. Will retrieve documents on the fly.")
+    
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    qa_prompt_template = """
+You are a question-answering system. Your task is to answer the question strictly using the information provided in the context. 
+
+Requirements:
+- The answer must be a single word or entity.  
+- If the context does not provide enough information, output exactly: Insufficient Information.  
+- Do NOT provide explanations or reasoning.  
+- Your entire answer must be wrapped in: <box> ... </box>  
+
+Question:
+{query}
+
+Context:
+{context}
+
+Final Answer (in <box></box>):
+"""
+
+    
+    results = []
+    pbar = tqdm.tqdm(query_data, desc="Generating Q&A answers")
+    
+    for data in pbar:
+        query = data['query']
+        
+        if retrieval_results_path and query in retrieval_data:
+            retrieval_list = retrieval_data[query]['retrieval_list']
+        else:
+            retrieved = my_rag.retrieve([query], args.top_k)
+            retrieval_list = []
+            for chunk_id, chunk_info in retrieved.items():
+                retrieval_list.append({
+                    "text": chunk_info['doc']
+                })
+        
+        context = '\n--------------\n'.join([item['text'] for item in retrieval_list])
+        
+        prompt = qa_prompt_template.format(query=query, context=context)
+        
+        try:
+            model_answer = llm_provider.generate(
+                prompt,
+                max_new_tokens=args.qa_max_tokens,
+                temperature=args.qa_temperature,
+                top_p=args.qa_top_p
+            )
+            
+            # clean up the answer (remove prompt if it was included)
+            if prompt in model_answer:
+                model_answer = model_answer.replace(prompt, "").strip()
+            
+            # import re
+            # match = re.search(r'The answer to the question is "(.*?)"', model_answer)
+            # if match:
+            # model_answer = match.group(1)
+            model_answer = extract_box(model_answer)
+        except Exception as e:
+            print(f"\nWarning: Error generating answer for query '{query[:50]}...': {e}")
+            model_answer = "Error generating answer"
+        
+        result = {
+            "query": query,
+            "model_answer": model_answer,
+            "question_type": data.get("question_type", "retrieval_query"),
+            "gold_answer": data.get("answer", ""),
+        }
+        results.append(result)
+    
+    json_path = output_dir / "multihop_qa_results.json"
+    with open(json_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved Q&A results to {json_path}")
+    print(f"Total queries processed: {len(results)}")
+    
+    return json_path
+
+
 def run_step(name: str, cmd: list, args: argparse.Namespace):
     """Run a MultiHop-RAG evaluation step"""
     print(f"MultiHop Running {name}")
@@ -127,7 +355,10 @@ def main(args):
             retrieval_results_path = Path(args.retrieval_results)
             print(f"\nUsing existing retrieval results: {retrieval_results_path}")
         else:
-            retrieval_results_path = prepare_multihop_retrieval_data(args)
+            if args.use_multihop_dataset:
+                retrieval_results_path = prepare_multihop_retrieval_data_from_dataset(args)
+            else:
+                retrieval_results_path = prepare_multihop_retrieval_data(args)
         
         # check if MultiHop-RAG repo exists
         if not os.path.exists(args.multihop_root):
@@ -161,28 +392,48 @@ def main(args):
             print(f"\nWARNING: QA eval script not found: {qa_script}")
             print("Skipping QA evaluation.")
             success = False
-        elif not os.path.exists(args.qa_results):
-            print(f"\nWARNING: QA results file not found: {args.qa_results}")
-            print("Please generate QA results first or provide the correct path.")
-            print("Skipping QA evaluation.")
-            success = False
         else:
-            # Try different possible command formats
-            possible_cmds = [
-                [args.python, qa_script, "--file", args.qa_results],
-                [args.python, qa_script, "--input", args.qa_results],
-                [args.python, qa_script, args.qa_results],
-            ]
+            # Generate Q&A results if not provided
+            if args.qa_results and os.path.exists(args.qa_results):
+                qa_results_path = Path(args.qa_results)
+                print(f"\nUsing existing QA results: {qa_results_path}")
+            else:
+                # Generate Q&A answers
+                if args.use_multihop_dataset:
+                    qa_results_path = generate_qa_answers_from_dataset(args)
+                else:
+                    print(f"\nWARNING: QA results file not found: {args.qa_results}")
+                    print("Please generate QA results first or provide the correct path.")
+                    print("Note: Q&A generation from custom query files is not yet implemented.")
+                    print("Skipping QA evaluation.")
+                    success = False
+                    qa_results_path = None
             
-            cmd_worked = False
-            for cmd in possible_cmds:
-                cmd_worked = run_step("QA Evaluation", cmd, args)
-                if cmd_worked:
-                    break
-            
-            if not cmd_worked:
-                print(f"\nCould not determine correct command format for {qa_script}")
-                success = False
+            if qa_results_path:
+                # The qa_evaluate.py script expects the file to be in qa_output/llama.json
+                # and reads dataset/MultiHopRAG.json, so we need to run it from multihop_root
+                qa_output_dir = os.path.join(args.multihop_root, "qa_output")
+                os.makedirs(qa_output_dir, exist_ok=True)
+                target_qa_file = os.path.join(qa_output_dir, "llama.json")
+                
+                # Copy our results to the expected location
+                import shutil
+                shutil.copy2(str(qa_results_path), target_qa_file)
+                print(f"Copied QA results to {target_qa_file} for evaluation")
+                
+                # qa_evaluate.py doesn't accept command line arguments - it reads from hardcoded paths
+                # So we need to run it from the multihop_root directory
+                original_cwd = os.getcwd()
+                try:
+                    os.chdir(args.multihop_root)
+                    # qa_evaluate.py reads from qa_output/llama.json and dataset/MultiHopRAG.json
+                    cmd = [args.python, "qa_evaluate.py"]
+                    cmd_worked = run_step("QA Evaluation", cmd, args)
+                    if not cmd_worked:
+                        print(f"\nQA evaluation failed. Please check the output above.")
+                        success = False
+                finally:
+                    os.chdir(original_cwd)
     
     if success:
         print("All evaluations completed successfully!")
@@ -261,6 +512,81 @@ if __name__ == "__main__":
         type=str,
         default=sys.executable,
         help="Python executable to use when invoking MultiHop-RAG scripts",
+    )
+    parser.add_argument(
+        "--embedding_provider",
+        type=str,
+        default="sentence_transformer",
+        choices=["sentence_transformer", "bedrock"],
+        help="Embedding provider type",
+    )
+    parser.add_argument(
+        "--embedding_model",
+        type=str,
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        help="Embedding model name",
+    )
+    parser.add_argument(
+        "--vector_search_provider",
+        type=str,
+        default="faiss",
+        choices=["faiss", "opensearch"],
+        help="Vector search provider type",
+    )
+    parser.add_argument(
+        "--aws_region",
+        type=str,
+        default=None,
+        help="AWS region (defaults to AWS_REGION env var or us-east-1)",
+    )
+    parser.add_argument(
+        "--opensearch_endpoint",
+        type=str,
+        default=None,
+        help="OpenSearch endpoint URL (required for opensearch provider)",
+    )
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=384,
+        help="Embedding dimension",
+    )
+    parser.add_argument(
+        "--use_multihop_dataset",
+        action="store_true",
+        help="Use official MultiHop-RAG dataset queries instead of custom query_file. "
+             "This enables proper multi-hop evaluation with 2-4 evidence facts per query.",
+    )
+    parser.add_argument(
+        "--llm_provider",
+        type=str,
+        default="huggingface",
+        choices=["huggingface", "bedrock"],
+        help="LLM provider type for Q&A generation",
+    )
+    parser.add_argument(
+        "--llm_model",
+        type=str,
+        default="mistralai/Mistral-7B-Instruct-v0.2",
+        help="LLM model name for Q&A generation",
+    )
+    parser.add_argument(
+        "--qa_max_tokens",
+        type=int,
+        default=512,
+        help="Maximum tokens for Q&A answer generation",
+    )
+    parser.add_argument(
+        "--qa_temperature",
+        type=float,
+        default=0.1,
+        help="Temperature for Q&A answer generation",
+    )
+    parser.add_argument(
+        "--qa_top_p",
+        type=float,
+        default=0.95,
+        help="Top-p for Q&A answer generation",
     )
     args = parser.parse_args()
 
