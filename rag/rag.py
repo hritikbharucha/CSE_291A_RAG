@@ -2,18 +2,21 @@ import torch
 import torch.nn as nn
 import os
 import numpy as np
+from tqdm import tqdm
 from .lru_cache import LRUCache
 from .searcher import *
 from .database import *
+from .embedding_provider import BaseEmbeddingProvider, auto_detect_embedding_provider
 
 
 class RAG:
     def __init__(self,
-                 embedding_model: nn.Module, rag_searcher: RAGSearcher,
+                 embedding_model, rag_searcher: RAGSearcher,
                  cache_size: int, db_dir: str = "data", db_name: str = "docs", new_db = False,
     **kwargs):
         self.database = None
-        self.embedding_model = embedding_model
+        # for backward compatibility that we only use HF model
+        self.embedding_model = auto_detect_embedding_provider(embedding_model)
         self.rag_searcher = rag_searcher
         self.lru_cache = LRUCache(capacity=cache_size)
         self.cache_size = cache_size
@@ -85,16 +88,17 @@ class RAG:
 
         chunks = [db_inserted_rows[idx]['doc'] for idx in indices]
 
-        embeddings = self.embedding_model.encode(chunks)
+        print(f"Encoding {len(chunks)} chunks into embeddings...")
+        embeddings = self.embedding_model.encode(chunks, show_progress=True)
         if type(embeddings) is torch.Tensor:
             embeddings = embeddings.detach().cpu().numpy()
 
-        # Pass database IDs to maintain mapping between FAISS positions and database IDs
+        print(f"Adding {len(embeddings)} embeddings to index...")
         self.rag_searcher.add(embeddings, db_ids=indices)
 
     def retrieve(self, queries: List[str], top_k: int) -> Dict[int, Dict[str, Any]]:
-        queries = self.embedding_model.encode(queries)
-        distances, indices = self.rag_searcher.retrieve(queries, top_k)
+        query_embeddings = self.embedding_model.encode(queries, show_progress=False)
+        distances, indices = self.rag_searcher.retrieve(query_embeddings, top_k)
         # Convert numpy array to list of integers for hashability
         indices_list = indices.flatten().tolist() if isinstance(indices, np.ndarray) else indices
         cache_rslts, misses = self.lru_cache.get_many(indices_list)

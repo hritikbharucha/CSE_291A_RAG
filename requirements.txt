@@ -10,3 +10,8 @@ open-rag-eval
 
 faiss-cpu
 # faiss-gpu; sys_platform == "linux"
+
+# AWS services support
+boto3
+opensearch-py
+requests-aws4auth
