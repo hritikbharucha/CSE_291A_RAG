@@ -1,14 +1,19 @@
 import argparse
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pandas as pd
 import json
 import random
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import torch
 import re
-import os
+from rag.provider_factory import create_llm_provider
+from rag.aws_config import get_aws_region, get_bedrock_llm_model
 
 def set_seeds(seed: int = 42):
     random.seed(seed)
@@ -46,7 +51,24 @@ if __name__ == '__main__':
     parser.add_argument("--max_new_tokens", type=int, default=120)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.95)
+    
+    # Provider arguments
+    parser.add_argument("--llm_provider", type=str, default="huggingface",
+                       choices=["huggingface", "bedrock"],
+                       help="LLM provider type")
+    parser.add_argument("--aws_region", type=str, default=None,
+                       help="AWS region (defaults to AWS_REGION env var or us-east-1)")
+    
     args = parser.parse_args()
+    
+    # Get AWS region
+    aws_region = get_aws_region(args.aws_region)
+    
+    # Resolve model names for Bedrock
+    if args.llm_provider == "bedrock":
+        llm_model_name = get_bedrock_llm_model(args.model_name)
+    else:
+        llm_model_name = args.model_name
 
     set_seeds(args.seed)
 
@@ -60,26 +82,11 @@ if __name__ == '__main__':
     indices = indices[: args.num_samples]
     articles = [articles_all[i] for i in indices]
 
-    print(f"Loading model {args.model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
-        device_map="auto",
-        torch_dtype="auto"
-    )
-
-    generator = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        do_sample=True,
-        pad_token_id=tokenizer.pad_token_id,
+    print(f"Loading LLM model {llm_model_name}...")
+    llm_provider = create_llm_provider(
+        provider_type=args.llm_provider,
+        model_name=llm_model_name,
+        region_name=aws_region
     )
 
     # Prompt Template
@@ -111,7 +118,12 @@ if __name__ == '__main__':
                 article_trim = truncate_article(article, max_chars=args.max_article_chars)
                 prompt = PROMPT_TEMPLATE.format(article=article_trim)
 
-                gen = generator(prompt)[0]["generated_text"]
+                gen = llm_provider.generate(
+                    prompt,
+                    max_new_tokens=args.max_new_tokens,
+                    temperature=args.temperature,
+                    top_p=args.top_p
+                )
                 question = extract_box(gen)
 
                 if not question.endswith("?"):
