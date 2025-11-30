@@ -1,8 +1,8 @@
 import argparse
 import os
 import rag.rag as rag
-from sentence_transformers import SentenceTransformer
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from rag.provider_factory import create_embedding_provider, create_vector_search_provider, create_llm_provider
+from rag.aws_config import get_aws_region, get_bedrock_embedding_model, get_bedrock_llm_model
 import pandas as pd
 import tqdm
 import re
@@ -63,26 +63,11 @@ def test_retrieval_accuracy():
     print(f"Top-1 acc: {chunk_top1_acc / len(df)}, Top-5 acc: {chunk_top5_acc / len(df)}, Article Top-1 acc: {article_top1_acc/total}, Top-5 acc: {article_top5_acc/total}")
 
 def test_retrieval_quality_baseline():
-    print(f"Loading model {args.llm}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.llm)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(
-        args.llm,
-        device_map="auto",
-        torch_dtype="auto"
-    )
-
-    generator = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        do_sample=True,
-        pad_token_id=tokenizer.pad_token_id,
+    print(f"Loading LLM model {args.llm}...")
+    llm_provider = create_llm_provider(
+        provider_type=args.llm_provider,
+        model_name=args.llm_model_name,
+        region_name=args.aws_region
     )
 
     PROMPT_TEMPLATE = """
@@ -106,7 +91,12 @@ def test_retrieval_quality_baseline():
         answer = row["answer"]
 
         prompt = PROMPT_TEMPLATE.format(question=query)
-        gen = generator(prompt)[0]["generated_text"]
+        gen = llm_provider.generate(
+            prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p
+        )
         llm_answer = extract_box(gen)
 
         answer = clean_letters_only(answer).lower()
@@ -144,26 +134,11 @@ def test_retrieval_quality_baseline():
         print(f"Note: {invalid_preds} predictions were invalid (not 'yes'/'no') and excluded from PR/F1.")
 
 def test_retrieval_quality(topk=5):
-    print(f"Loading model {args.llm}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.llm)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(
-        args.llm,
-        device_map="auto",
-        torch_dtype="auto"
-    )
-
-    generator = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_p=args.top_p,
-        do_sample=True,
-        pad_token_id=tokenizer.pad_token_id,
+    print(f"Loading LLM model {args.llm}...")
+    llm_provider = create_llm_provider(
+        provider_type=args.llm_provider,
+        model_name=args.llm_model_name,
+        region_name=args.aws_region
     )
 
     PROMPT_TEMPLATE = """
@@ -194,7 +169,12 @@ def test_retrieval_quality(topk=5):
         article = my_rag.retrieve([query], topk)
         article = "\n".join([article[key]['doc'] for key in article.keys()])  # keep as-is
         prompt = PROMPT_TEMPLATE.format(article=article, question=query)
-        gen = generator(prompt)[0]["generated_text"]
+        gen = llm_provider.generate(
+            prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p
+        )
         llm_answer = extract_box(gen)
 
         answer = clean_letters_only(answer).lower()
@@ -241,15 +221,70 @@ if __name__ == '__main__':
     parser.add_argument("--max_new_tokens", type=int, default=120)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.95)
+    
+    # Provider arguments
+    parser.add_argument("--embedding_provider", type=str, default="sentence_transformer",
+                       choices=["sentence_transformer", "bedrock"],
+                       help="Embedding provider type")
+    parser.add_argument("--embedding_model", type=str, default="sentence-transformers/all-MiniLM-L6-v2",
+                       help="Embedding model name")
+    parser.add_argument("--vector_search_provider", type=str, default="faiss",
+                       choices=["faiss", "opensearch"],
+                       help="Vector search provider type")
+    parser.add_argument("--llm_provider", type=str, default="huggingface",
+                       choices=["huggingface", "bedrock"],
+                       help="LLM provider type")
+    parser.add_argument("--aws_region", type=str, default=None,
+                       help="AWS region (defaults to AWS_REGION env var or us-east-1)")
+    parser.add_argument("--opensearch_endpoint", type=str, default=None,
+                       help="OpenSearch endpoint URL (required for opensearch provider)")
+    parser.add_argument("--dimension", type=int, default=384,
+                       help="Embedding dimension")
+    parser.add_argument("--db_dir", type=str, default="./data",
+                       help="RAG database directory")
+    parser.add_argument("--db_name", type=str, default="docs",
+                       help="RAG database name")
+    
     args = parser.parse_args()
+    
+    # Get AWS region
+    aws_region = get_aws_region(args.aws_region)
+    
+    # Resolve model names for Bedrock
+    if args.embedding_provider == "bedrock":
+        embedding_model_name = get_bedrock_embedding_model(args.embedding_model)
+    else:
+        embedding_model_name = args.embedding_model
+    
+    if args.llm_provider == "bedrock":
+        llm_model_name = get_bedrock_llm_model(args.llm)
+    else:
+        llm_model_name = args.llm
+    
+    args.llm_model_name = llm_model_name
+    args.aws_region = aws_region
 
+    # Create providers
+    embedding_provider = create_embedding_provider(
+        provider_type=args.embedding_provider,
+        model_name=embedding_model_name,
+        dimension=args.dimension,
+        region_name=aws_region
+    )
+    
+    vector_search_provider = create_vector_search_provider(
+        provider_type=args.vector_search_provider,
+        dimension=args.dimension,
+        endpoint=args.opensearch_endpoint,
+        region_name=aws_region
+    )
+    
     my_rag = rag.RAG(
-        embedding_model=SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2"),
-        rag_searcher=rag.FAISSRAGSearcher(384),
-        dimension=384,
+        embedding_model=embedding_provider,
+        rag_searcher=vector_search_provider,
         cache_size=0,
-        db_dir="./data",
-        db_name="docs",
+        db_dir=args.db_dir,
+        db_name=args.db_name,
     )
 
     if args.mode == "retrieval_accuracy":

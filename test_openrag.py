@@ -5,7 +5,8 @@ import json
 import pandas as pd
 import tqdm
 import rag.rag as rag
-from sentence_transformers import SentenceTransformer
+from rag.provider_factory import create_embedding_provider, create_vector_search_provider
+from rag.aws_config import get_aws_region, get_bedrock_embedding_model
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -92,10 +93,34 @@ def run_openrag_eval(args):
     print("Open RAG Style Retrieval Evaluation")
     
     print(f"Loading RAG system from {args.db_dir}...")
+    
+    # Get AWS region
+    aws_region = get_aws_region(args.aws_region)
+    
+    # Resolve model names for Bedrock
+    if args.embedding_provider == "bedrock":
+        embedding_model_name = get_bedrock_embedding_model(args.embedding_model)
+    else:
+        embedding_model_name = args.embedding_model
+    
+    # Create providers
+    embedding_provider = create_embedding_provider(
+        provider_type=args.embedding_provider,
+        model_name=embedding_model_name,
+        dimension=args.dimension,
+        region_name=aws_region
+    )
+    
+    vector_search_provider = create_vector_search_provider(
+        provider_type=args.vector_search_provider,
+        dimension=args.dimension,
+        endpoint=args.opensearch_endpoint,
+        region_name=aws_region
+    )
+    
     my_rag = rag.RAG(
-        embedding_model=SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2"),
-        rag_searcher=rag.FAISSRAGSearcher(384),
-        dimension=384,
+        embedding_model=embedding_provider,
+        rag_searcher=vector_search_provider,
         cache_size=args.cache_size,
         db_dir=args.db_dir,
         db_name=args.db_name,
@@ -256,6 +281,44 @@ if __name__ == "__main__":
         type=int,
         default=1000,
         help="LRU cache size for RAG system",
+    )
+    parser.add_argument(
+        "--embedding_provider",
+        type=str,
+        default="sentence_transformer",
+        choices=["sentence_transformer", "bedrock"],
+        help="Embedding provider type",
+    )
+    parser.add_argument(
+        "--embedding_model",
+        type=str,
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        help="Embedding model name",
+    )
+    parser.add_argument(
+        "--vector_search_provider",
+        type=str,
+        default="faiss",
+        choices=["faiss", "opensearch"],
+        help="Vector search provider type",
+    )
+    parser.add_argument(
+        "--aws_region",
+        type=str,
+        default=None,
+        help="AWS region (defaults to AWS_REGION env var or us-east-1)",
+    )
+    parser.add_argument(
+        "--opensearch_endpoint",
+        type=str,
+        default=None,
+        help="OpenSearch endpoint URL (required for opensearch provider)",
+    )
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=384,
+        help="Embedding dimension",
     )
     args = parser.parse_args()
 
