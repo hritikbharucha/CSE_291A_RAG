@@ -1,4 +1,4 @@
-prompt = prompt = """You are a RAG Query Refinement Agent for a semantic search system (NOT a database).
+prompt = """You are a RAG Query Refinement Agent for a semantic search system (NOT a database).
 
 Your job:
 - Read the user question.
@@ -79,7 +79,7 @@ class QueryRefiner:
             temperature=self.temperature,
             top_p=self.top_p
         )
-        print(gen)
+        # print(gen)
 
         refined = extract_box(gen).strip()
 
