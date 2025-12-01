@@ -5,6 +5,17 @@ from typing import Iterable, Dict, Any, List, Optional
 import tqdm
 import hashlib
 import re
+try:
+    from .chunk_utils import ChunkManager
+except ImportError:
+    # When running as a script, import directly from the file
+    import os
+    import importlib.util
+    chunk_utils_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chunk_utils.py')
+    spec = importlib.util.spec_from_file_location("chunk_utils", chunk_utils_path)
+    chunk_utils = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(chunk_utils)
+    ChunkManager = chunk_utils.ChunkManager
 
 ISO = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -21,24 +32,11 @@ def compute_doc_hash(text: str) -> str:
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
 
-# Splitting sentences
-def split_into_sentences(text: str):
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    return [s for s in sentences if s]
-
-def chunk_sentences(text: str, max_sentences: int = 5):
-    sentences = split_into_sentences(text)
-    chunks = []
-    for i in range(0, len(sentences), max_sentences):
-        chunk = " ".join(sentences[i:i+max_sentences])
-        chunks.append(chunk)
-    return chunks
-
-
 class DocStore:
-    def __init__(self, db_path: str = "data/docs.sqlite"):
+    def __init__(self, db_path: str = "data/docs.sqlite", chunk_mode="base"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.chunk_manager = ChunkManager(chunk_mode)
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
@@ -85,7 +83,7 @@ class DocStore:
         rows = {}
         # for each article, we need to insert chunks
         for idx, article in tqdm.tqdm(enumerate(articles), total=len(articles), desc="Inserting articles into docs database"):
-            chunks = chunk_sentences(article)
+            chunks = self.chunk_manager.chunk_sentences(article)
             article_id = article_ids[idx]
             meta = metas[idx]
             new_rows = self.insert_chunks(chunks, meta, article_id)
@@ -116,11 +114,13 @@ class DocStore:
         new_rows = {}
         article_title = meta["title"]
         article_description = f'a description: {meta["description"]}' if "description" in meta else "no description"
-        format = "Quoted from {article_title}, which contains {article_description}. {chunk}"
+        # format = "Quoted from {article_title}, which contains {article_description}. {chunk}"
+        format = "Title: {article_title} \n\n {chunk}"
         with self.conn:
             self.conn.execute("PRAGMA foreign_keys = ON;")
             for doc_chunk in doc_chunks:
-                doc_chunk = format.format(article_title=article_title, article_description=article_description, chunk=doc_chunk)
+                # doc_chunk = format.format(article_title=article_title, article_description=article_description, chunk=doc_chunk)
+                doc_chunk = format.format(article_title=article_title, chunk=doc_chunk)
                 cur = self.conn.execute(
                     """
                     INSERT INTO docs (doc, meta, article_id, doc_hash, access_freq, access_dt)
