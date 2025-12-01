@@ -13,7 +13,9 @@ class RAG:
     def __init__(self,
                  embedding_model, rag_searcher: RAGSearcher,
                  cache_size: int, db_dir: str = "data", db_name: str = "docs", new_db = False,
-    **kwargs):
+                 mode="query_refiner+reranker",
+                 # mode="base",
+                 **kwargs):
         self.database = None
         # for backward compatibility that we only use HF model
         self.embedding_model = auto_detect_embedding_provider(embedding_model)
@@ -22,7 +24,22 @@ class RAG:
         self.cache_size = cache_size
         self.db_dir = db_dir
         self.db_name = db_name
+        self.mode = mode
         self.load(db_dir, db_name)
+
+        self.query_refiner = None
+        self.reranker = None
+        if 'query_refiner' in self.mode:
+            from . import query_refiner
+            from .llm_provider import create_llm_provider
+            # deepseek-ai/deepseek-r1-distill-qwen-1.5b Not a good idea to think
+            # microsoft/Phi-3-mini-128k-instruct
+            # QWen2.5-3B
+            llm = create_llm_provider(provider_type="huggingface", model_name="microsoft/Phi-3-mini-128k-instruct")
+            self.query_refiner = query_refiner.QueryRefiner(llm_provider=llm)
+        if 'reranker' in self.mode:
+            from . import query_reranker
+            self.reranker = query_reranker.Reranker()
 
     def load(self, load_dir: str, db_name: str=None):
         if os.path.exists(load_dir):
@@ -97,8 +114,12 @@ class RAG:
         self.rag_searcher.add(embeddings, db_ids=indices)
 
     def retrieve(self, queries: List[str], top_k: int) -> Dict[int, Dict[str, Any]]:
+        if self.query_refiner is not None:
+            queries = [self.query_refiner.get_refined_query(query) for query in queries]
+
+        db_topk = top_k if self.reranker is None else 30
         query_embeddings = self.embedding_model.encode(queries, show_progress=False)
-        distances, indices = self.rag_searcher.retrieve(query_embeddings, top_k)
+        distances, indices = self.rag_searcher.retrieve(query_embeddings, db_topk)
         # Convert numpy array to list of integers for hashability
         indices_list = indices.flatten().tolist() if isinstance(indices, np.ndarray) else indices
         cache_rslts, misses = self.lru_cache.get_many(indices_list)
@@ -106,6 +127,16 @@ class RAG:
         if len(misses) > 0:
             db_rslts = self.database.fetch_chunks(misses)
             self.lru_cache.put_many(db_rslts)
+
+        if self.reranker is not None:
+            # in our case, len(queries) is always 1
+            docs = [db_rslts[key]["doc"] for key in db_rslts.keys()]
+            ranked = self.reranker.rerank(queries[0], docs, top_k)
+            keys = list(db_rslts.keys())
+            # print(ranked)
+            # Convert ranked results back to dict format
+            db_rslts = {keys[ranked_item[0]]: db_rslts[keys[ranked_item[0]]] for ranked_item in ranked}
+
         return {**db_rslts, **cache_rslts}
 
 
