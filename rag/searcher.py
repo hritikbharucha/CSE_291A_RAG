@@ -41,7 +41,8 @@ class FAISSRAGSearcher(RAGSearcher):
             # If no db_ids provided, use sequential IDs starting from current index size
             start_id = len(self.faiss_to_db_id)
             db_ids = list(range(start_id, start_id + len(embeddings)))
-        
+
+        faiss.normalize_L2(embeddings)
         self.index.add(embeddings)
         self.faiss_to_db_id.extend(db_ids)
 
@@ -54,6 +55,7 @@ class FAISSRAGSearcher(RAGSearcher):
             distances: numpy array of distances
             db_indices: numpy array of database IDs (mapped from FAISS indices)
         """
+        faiss.normalize_L2(queries)
         distances, faiss_indices = self.index.search(queries, top_k)
         
         # Map FAISS indices to database IDs
