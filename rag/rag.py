@@ -7,14 +7,17 @@ from .lru_cache import LRUCache
 from .searcher import *
 from .database import *
 from .embedding_provider import BaseEmbeddingProvider, auto_detect_embedding_provider
+from rag.aws_config import get_bedrock_llm_model, get_aws_region, list_available_bedrock_models
 
 
 class RAG:
     def __init__(self,
                  embedding_model, rag_searcher: RAGSearcher,
                  cache_size: int, db_dir: str = "data", db_name: str = "docs", new_db = False,
-                 mode="query_refiner+reranker",
-                 # mode="base",
+                #  mode="query_refiner+reranker",
+                #  mode="base",
+                #  mode="query_refiner",
+                 mode="reranker",
                  **kwargs):
         self.database = None
         # for backward compatibility that we only use HF model
@@ -35,11 +38,14 @@ class RAG:
             # deepseek-ai/deepseek-r1-distill-qwen-1.5b Not a good idea to think
             # microsoft/Phi-3-mini-128k-instruct
             # QWen2.5-3B
-            llm = create_llm_provider(provider_type="huggingface", model_name="microsoft/Phi-3-mini-128k-instruct")
+            # llm = create_llm_provider(provider_type="huggingface", model_name="microsoft/Phi-3-mini-128k-instruct")
+            model_name = get_bedrock_llm_model("mistral-7b")
+            llm = create_llm_provider(provider_type="bedrock", model_name=model_name, region_name=get_aws_region())
             self.query_refiner = query_refiner.QueryRefiner(llm_provider=llm)
         if 'reranker' in self.mode:
+            # print(list_available_bedrock_models())
             from . import query_reranker
-            self.reranker = query_reranker.Reranker()
+            self.reranker = query_reranker.Reranker(region=get_aws_region())
 
     def load(self, load_dir: str, db_name: str=None):
         if os.path.exists(load_dir):
