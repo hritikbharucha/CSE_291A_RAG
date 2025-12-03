@@ -1,39 +1,59 @@
+import json
 from typing import List, Tuple, Optional
-import numpy as np
-import torch.cuda
-from sentence_transformers import CrossEncoder
+import boto3
 
 
 class Reranker:
     """
-    - "BAAI/bge-reranker-v2-m3"
-    - "cross-encoder/ms-marco-MiniLM-L12-v2"
+    Reranker using Amazon Bedrock model: amazon.rerank-v1:0
+    With detailed debugging prints.
     """
 
     def __init__(
         self,
-        model_name: str = "BAAI/bge-reranker-v2-m3",
-        device: Optional[str] = None,
+        model_name: str = "amazon.rerank-v1:0",
+        region: str = "us-east-1",
         batch_size: int = 32,
     ):
         self.model_name = model_name
         self.batch_size = batch_size
-        default_device = "cuda" if torch.cuda.is_available() else "cpu"
-        default_device = "mps" if torch.mps.is_available() else default_device
-        device = device if device is not None else default_device
-        self.model = CrossEncoder(model_name, device=device)
 
-    def score(
-        self,
-        query: str,
-        docs: List[str],
-    ) -> List[float]:
+        self.client = boto3.client(
+            "bedrock-runtime",
+            region_name=region
+        )
+
+    def _bedrock_rerank_batch(self, query: str, docs: List[str]) -> List[float]:
+        payload = {
+            "query": query,
+            "documents": docs,
+        }
+
+        response = self.client.invoke_model(
+            modelId=self.model_name,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(payload),
+        )
+
+        body = json.loads(response["body"].read())
+
+        scores = [item["relevance_score"] for item in body["results"]]
+
+        return scores
+
+    def score(self, query: str, docs: List[str]) -> List[float]:
         if not docs:
             return []
 
-        pairs = [(query, d) for d in docs]
-        scores = self.model.predict(pairs, batch_size=self.batch_size)
-        return [float(s) for s in np.asarray(scores).tolist()]
+        all_scores = []
+
+        for i in range(0, len(docs), self.batch_size):
+            batch = docs[i : i + self.batch_size]
+            scores = self._bedrock_rerank_batch(query, batch)
+            all_scores.extend(scores)
+
+        return [float(s) for s in all_scores]
 
     def rerank(
         self,
