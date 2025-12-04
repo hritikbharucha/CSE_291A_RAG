@@ -113,13 +113,15 @@ def run_openrag_eval(args):
     
     vector_search_provider = create_vector_search_provider(
         provider_type=args.vector_search_provider,
+        embedding_provider=embedding_provider,
         dimension=args.dimension,
         endpoint=args.opensearch_endpoint,
-        region_name=aws_region
+        region_name=aws_region,
+        sparse_type=args.sparse_type,
+        alpha=args.hybrid_alpha
     )
     
     my_rag = rag.RAG(
-        embedding_model=embedding_provider,
         rag_searcher=vector_search_provider,
         cache_size=args.cache_size,
         db_dir=args.db_dir,
@@ -279,8 +281,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache_size",
         type=int,
-        default=1000,
-        help="LRU cache size for RAG system",
+        default=0,
+        help="LRU cache size for RAG system (0 disables caching)",
     )
     parser.add_argument(
         "--embedding_provider",
@@ -299,7 +301,7 @@ if __name__ == "__main__":
         "--vector_search_provider",
         type=str,
         default="faiss",
-        choices=["faiss", "opensearch"],
+        choices=["faiss", "opensearch", "hybrid"],
         help="Vector search provider type",
     )
     parser.add_argument(
@@ -319,6 +321,19 @@ if __name__ == "__main__":
         type=int,
         default=384,
         help="Embedding dimension",
+    )
+    parser.add_argument(
+        "--sparse_type",
+        type=str,
+        default="bm25",
+        choices=["tfidf", "bm25"],
+        help="Sparse backend for hybrid search",
+    )
+    parser.add_argument(
+        "--hybrid_alpha",
+        type=float,
+        default=0.5,
+        help="Weight for sparse scores when using hybrid search",
     )
     args = parser.parse_args()
 

@@ -1,12 +1,67 @@
 import json
+from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional
 import boto3
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
 
 
-class Reranker:
+class Reranker(ABC):
+    def __init__(self, batch_size: int = 32):
+        self.batch_size = batch_size
+
+    @abstractmethod
+    def score(self, query: str, docs: List[str]) -> List[float]:
+        """
+        Compute relevance scores for documents given a query.
+        
+        Args:
+            query: The search query
+            docs: List of documents to score
+            
+        Returns:
+            List of relevance scores (one per document)
+        """
+        pass
+
+    def rerank(
+        self,
+        query: str,
+        docs: List[str],
+        top_k: Optional[int] = None,
+    ) -> List[Tuple[int, float, str]]:
+        """
+        Rerank documents by relevance score.
+        
+        Args:
+            query: The search query
+            docs: List of documents to rerank
+            top_k: Optional limit on number of results to return
+            
+        Returns:
+            List of tuples (original_index, score, document) sorted by score (descending)
+        """
+        if not docs:
+            return []
+
+        scores = self.score(query, docs)
+        indices = list(range(len(docs)))
+
+        ranked = sorted(
+            zip(indices, scores, docs),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+
+        if top_k is not None:
+            ranked = ranked[:top_k]
+
+        return ranked
+
+
+class BedrockReranker(Reranker):
     """
     Reranker using Amazon Bedrock model: amazon.rerank-v1:0
-    With detailed debugging prints.
     """
 
     def __init__(
@@ -15,8 +70,8 @@ class Reranker:
         region: str = "us-east-1",
         batch_size: int = 32,
     ):
+        super().__init__(batch_size=batch_size)
         self.model_name = model_name
-        self.batch_size = batch_size
 
         self.client = boto3.client(
             "bedrock-runtime",
@@ -55,25 +110,79 @@ class Reranker:
 
         return [float(s) for s in all_scores]
 
-    def rerank(
+
+class HFReranker(Reranker):
+    """
+    Local reranker using Hugging Face cross-encoder models.
+    Supports models like:
+    - cross-encoder/ms-marco-MiniLM-L-6-v2
+    - BAAI/bge-reranker-base
+    """
+
+    def __init__(
         self,
-        query: str,
-        docs: List[str],
-        top_k: Optional[int] = None,
-    ) -> List[Tuple[int, float, str]]:
+        model_name: str = "BAAI/bge-reranker-base",
+        batch_size: int = 1,
+        device: Optional[str] = None,
+    ):
+        super().__init__(batch_size=batch_size)
+        self.model_name = model_name
+        
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "mps" if torch.mps.is_available() else "cpu"
+        self.device = device
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
+        self.model.to(self.device)
+        self.model.eval()
+
+    def _hf_rerank_batch(self, query: str, docs: List[str]) -> List[float]:
+        """
+        Score a batch of documents using the Hugging Face model.
+        Processes documents in sub-batches of size self.batch_size to manage memory.
+        """
+        all_scores = []
+        
+        for i in range(0, len(docs), self.batch_size):
+            batch_docs = docs[i : i + self.batch_size]
+            pairs = [[query, doc] for doc in batch_docs]
+            
+            with torch.no_grad():
+                inputs = self.tokenizer(
+                    pairs,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt",
+                    max_length=512
+                )
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                outputs = self.model(**inputs)
+                logits = outputs.logits
+                
+                if logits.dim() > 1:
+                    logits = logits.squeeze(-1)
+                
+                # Convert logits to scores using sigmoid
+                batch_scores = torch.sigmoid(logits).cpu().tolist()
+                
+                # Ensure we return a list
+                if not isinstance(batch_scores, list):
+                    batch_scores = [batch_scores]
+                
+                all_scores.extend(batch_scores)
+        
+        return all_scores
+
+    def score(self, query: str, docs: List[str]) -> List[float]:
         if not docs:
             return []
 
-        scores = self.score(query, docs)
-        indices = list(range(len(docs)))
+        all_scores = []
 
-        ranked = sorted(
-            zip(indices, scores, docs),
-            key=lambda x: x[1],
-            reverse=True,
-        )
+        for i in range(0, len(docs), self.batch_size):
+            batch = docs[i : i + self.batch_size]
+            scores = self._hf_rerank_batch(query, batch)
+            all_scores.extend(scores)
 
-        if top_k is not None:
-            ranked = ranked[:top_k]
-
-        return ranked
+        return [float(s) for s in all_scores]

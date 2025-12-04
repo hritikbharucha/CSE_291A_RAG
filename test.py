@@ -229,7 +229,7 @@ if __name__ == '__main__':
     parser.add_argument("--embedding_model", type=str, default="sentence-transformers/all-MiniLM-L6-v2",
                        help="Embedding model name")
     parser.add_argument("--vector_search_provider", type=str, default="faiss",
-                       choices=["faiss", "opensearch"],
+                       choices=["faiss", "opensearch", "hybrid"],
                        help="Vector search provider type")
     parser.add_argument("--llm_provider", type=str, default="huggingface",
                        choices=["huggingface", "bedrock"],
@@ -240,6 +240,11 @@ if __name__ == '__main__':
                        help="OpenSearch endpoint URL (required for opensearch provider)")
     parser.add_argument("--dimension", type=int, default=384,
                        help="Embedding dimension")
+    parser.add_argument("--sparse_type", type=str, default="bm25",
+                       choices=["tfidf", "bm25"],
+                       help="Sparse backend for hybrid search")
+    parser.add_argument("--hybrid_alpha", type=float, default=0.5,
+                       help="Weight for sparse scores when using hybrid search")
     parser.add_argument("--db_dir", type=str, default="./data",
                        help="RAG database directory")
     parser.add_argument("--db_name", type=str, default="docs",
@@ -274,13 +279,15 @@ if __name__ == '__main__':
     
     vector_search_provider = create_vector_search_provider(
         provider_type=args.vector_search_provider,
+        embedding_provider=embedding_provider,
         dimension=args.dimension,
         endpoint=args.opensearch_endpoint,
-        region_name=aws_region
+        region_name=aws_region,
+        sparse_type=args.sparse_type,
+        alpha=args.hybrid_alpha
     )
     
     my_rag = rag.RAG(
-        embedding_model=embedding_provider,
         rag_searcher=vector_search_provider,
         cache_size=0,
         db_dir=args.db_dir,

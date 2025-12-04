@@ -11,7 +11,7 @@ from .llm_provider import (
     BedrockLLMProvider,
     create_llm_provider as _create_llm_provider
 )
-from .searcher import RAGSearcher, FAISSRAGSearcher, OpenSearchProvider
+from .searcher import RAGSearcher, FAISSRAGSearcher, OpenSearchProvider, HybridRAGSearcher
 
 
 def create_embedding_provider(
@@ -42,22 +42,38 @@ def create_embedding_provider(
 
 def create_vector_search_provider(
     provider_type: str = "faiss",
-    dimension: int = 384,
+    embedding_provider: Optional[BaseEmbeddingProvider] = None,
+    dimension: Optional[int] = 384,
     endpoint: Optional[str] = None,
     index_name: str = "rag_index",
     region_name: str = "us-east-1",
+    sparse_type: str = "tfidf",
+    alpha: float = 0.5,
     **kwargs
 ) -> RAGSearcher:
+    if embedding_provider is None and provider_type in {"faiss", "opensearch", "hybrid"}:
+        raise ValueError("embedding_provider is required for dense or hybrid searchers.")
+
     if provider_type == "faiss":
-        return FAISSRAGSearcher(dimension, **kwargs)
+        return FAISSRAGSearcher(embedding_provider=embedding_provider, dimension=dimension, alpha=alpha, **kwargs)
     elif provider_type == "opensearch":
         if endpoint is None:
             raise ValueError("endpoint is required for OpenSearch provider")
         return OpenSearchProvider(
-            dimension,
+            embedding_provider=embedding_provider,
+            dimension=dimension,
             endpoint=endpoint,
             index_name=index_name,
             region_name=region_name,
+            alpha=alpha,
+            **kwargs
+        )
+    elif provider_type == "hybrid":
+        return HybridRAGSearcher(
+            embedding_provider=embedding_provider,
+            dimension=dimension,
+            sparse_type=sparse_type,
+            alpha=alpha,
             **kwargs
         )
     else:
@@ -98,10 +114,13 @@ def create_providers(
     
     vector_search_provider = create_vector_search_provider(
         provider_type=vector_search_provider_type,
+        embedding_provider=embedding_provider,
         dimension=dimension,
         endpoint=opensearch_endpoint,
         index_name=opensearch_index_name,
         region_name=aws_region,
+        sparse_type=kwargs.get("sparse_type", "tfidf"),
+        alpha=kwargs.get("alpha", 0.5),
         **kwargs.get("vector_search_kwargs", {})
     )
     
