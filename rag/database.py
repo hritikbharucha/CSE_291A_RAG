@@ -182,7 +182,7 @@ class DocStore:
     #                                     access_dt = DATETIME('now');
     #                               """, rows)
 
-    def fetch_chunks(self, ids: Iterable[int], touch: bool = True) -> Dict[int, Dict[str, Any]]:
+    def fetch_chunks(self, ids: Iterable[int], touch: bool = True, return_title=False) -> Dict[int, Dict[str, Any]]:
         ids = list({int(i) for i in ids})
         if not ids:
             return {}
@@ -202,12 +202,14 @@ class DocStore:
                     [(now, r[0]) for r in rows]
                 )
             for (i, d, m, a_id, f, a) in rows:
-                _, d = parse_formatted_chunk(d)
+                if not return_title:
+                    _, d = parse_formatted_chunk(d)
                 out[i] = {"doc": d, "meta": json.loads(m) if m else None, "article_id": a_id,
                           "access_freq": f + 1, "access_datetime": now}
         else:
             for (i, d, m, a_id, f, a) in rows:
-                _, d = parse_formatted_chunk(d)
+                if not return_title:
+                    _, d = parse_formatted_chunk(d)
                 out[i] = {"doc": d, "meta": json.loads(m) if m else None, "article_id": a_id,
                           "access_freq": f, "access_datetime": a}
         return out

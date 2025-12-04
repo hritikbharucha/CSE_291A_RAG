@@ -13,9 +13,9 @@ class RAG:
                  embedding_model=None, rag_searcher: RAGSearcher = None,
                  cache_size: int = 0, db_dir: str = "data", db_name: str = "docs", new_db = False,
                 #  mode="query_refiner+reranker",
-                #  mode="base",
+                 mode="base",
                 #  mode="query_refiner",
-                 mode="reranker",
+                #  mode="reranker",
                  add_batch_size=32,
                  **kwargs):
         if rag_searcher is None:
@@ -163,8 +163,18 @@ class RAG:
             # print(ranked)
             # Convert ranked results back to dict format
             db_rslts = {keys[ranked_item[0]]: db_rslts[keys[ranked_item[0]]] for ranked_item in ranked}
+            # Update indices_list to reflect reranked order, limited to top_k
+            indices_list = [keys[ranked_item[0]] for ranked_item in ranked]
 
-        return {**db_rslts, **cache_rslts}
+        indices_list = indices_list[:top_k]
+
+        result = {}
+        all_results = {**db_rslts, **cache_rslts}
+        for idx in indices_list:
+            if idx in all_results:
+                result[idx] = all_results[idx]
+        
+        return result
 
 
 
