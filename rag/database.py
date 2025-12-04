@@ -31,6 +31,30 @@ def compute_doc_hash(text: str) -> str:
     norm = normalize_text(text)
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
+def parse_formatted_chunk(text: str):
+    """
+    Reverse the formatting:
+    "Title: {article_title}\n\n{chunk}"
+    Returns (article_title, chunk)
+    """
+    prefix = "Title: "
+    if not text.startswith(prefix):
+        raise ValueError("Chunk does not start with 'Title: '")
+
+    # Remove prefix
+    rest = text[len(prefix):]
+
+    # Split only on the FIRST blank line
+    # maxsplit=1 ensures chunk body can contain arbitrary newlines
+    parts = rest.split("\n\n", 1)
+
+    if len(parts) == 1:
+        # No content, only title
+        return parts[0].strip(), ""
+
+    article_title = parts[0].strip()
+    chunk = parts[1].strip()
+    return article_title, chunk
 
 class DocStore:
     def __init__(self, db_path: str = "data/docs.sqlite", chunk_mode="base"):
@@ -178,10 +202,12 @@ class DocStore:
                     [(now, r[0]) for r in rows]
                 )
             for (i, d, m, a_id, f, a) in rows:
+                _, d = parse_formatted_chunk(d)
                 out[i] = {"doc": d, "meta": json.loads(m) if m else None, "article_id": a_id,
                           "access_freq": f + 1, "access_datetime": now}
         else:
             for (i, d, m, a_id, f, a) in rows:
+                _, d = parse_formatted_chunk(d)
                 out[i] = {"doc": d, "meta": json.loads(m) if m else None, "article_id": a_id,
                           "access_freq": f, "access_datetime": a}
         return out
