@@ -174,8 +174,9 @@ def run_openrag_eval(args):
             retrieved_ids.append(chunk_id)
             retrieved_article_ids.append(chunk_info.get('article_id', ''))
         
-        retrieved_lists.append(retrieved_texts)
-        gold_lists.append([gt_chunk_text] if gt_chunk_text else [])
+        # For OpenRAG-style metrics, use chunk IDs as the gold signal.
+        retrieved_lists.append([str(i) for i in retrieved_ids])
+        gold_lists.append([str(gt_chunk_id)] if gt_chunk_id is not None else [])
         
         if gt_chunk_id is not None:
             chunk_top1_acc += 1 if gt_chunk_id in retrieved_ids[:1] else 0
@@ -216,7 +217,7 @@ def run_openrag_eval(args):
     print(f"Top-1 Accuracy: {article_top1_acc / total:.4f}")
     print(f"Top-5 Accuracy: {article_top5_acc / total:.4f}")
     
-    print("\n--- Text-Based Retrieval Metrics ---")
+    print("\n--- ID-Based Retrieval Metrics (Chunk ID) ---")
     for metric, value in metrics.items():
         print(f"{metric}: {value:.4f}")
     

@@ -185,29 +185,26 @@ if __name__ == '__main__':
 
     PROMPT_TEMPLATE = """You are generating **retrieval-focused yes/no questions** for a RAG benchmark.
 
-    <context>
-    {article}
-    </context>
+You are given one passage of text:
+<span>
+{chunk}
+</span>
 
-    Relevant supporting span:
-    <span>
-    {chunk}
-    </span>
+Write ONE yes/no question that can be answered using ONLY the information inside <span>. 
+Do NOT use or assume any information outside this span.
 
-    Write ONE yes/no question that can be answered using ONLY the above span or immediate surrounding context.
+Strict rules (follow ALL):
+- The question must be fully answerable from the span; it must reference only facts explicitly stated there.
+- The question must be a yes/no question, and the expected answer must be exactly "yes" or "no" (lowercase).
+- Include at least two concrete anchors from the span (e.g., a PERSON/ORG and a DATE/NUMBER/LOCATION).
+- Avoid vague or abstract topics such as “impact,” “significance,” or opinions.
+- The question must not be answerable from general knowledge or plausibility; it must require reading the span.
+- Use one sentence, 12–30 words.
 
-    Strict rules (follow ALL):
-    - The question must be fully answerable from the span. Do not ask about anything not explicitly stated.
-    - The question must be a yes/no question. The answer must be exactly "yes" or "no" (lowercase).
-    - Include at least two concrete anchors from the article (e.g., a PERSON/ORG and a DATE/NUMBER/LOCATION).
-    - Avoid vague or abstract prompts (e.g., “main idea,” “impact,” “significance”).
-    - The question must not be answerable from the title alone or general knowledge.
-    - Use one sentence, 12–30 words.
-
-    Output format:
-    <question>your question here</question>
-    <answer>yes or no</answer>
-    Only output these tags and nothing else.
+Output format:
+<question>your question here</question>
+<answer>yes or no</answer>
+Only output these tags and nothing else.
     """
 
     print("Generating retrieval queries...")

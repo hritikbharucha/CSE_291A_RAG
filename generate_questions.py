@@ -170,32 +170,30 @@ if __name__ == '__main__':
         region_name=aws_region
     )
 
-    PROMPT_TEMPLATE = """You are creating **retrieval-focused** questions for a RAG benchmark.
+    PROMPT_TEMPLATE = """You are creating high-quality retrieval questions for a RAG benchmark.
 
-    Given the following news article:
-    <context>
-    {article}
-    </context>
+You are given one passage of text:
+<span>
+{chunk}
+</span>
 
-    The relevant supporting span is:
-    <span>
-    {chunk}
-    </span>
+Your task:
+Write ONE realistic question that can be answered using ONLY the information inside <span>. 
+You must NOT use or assume any information outside this span.
 
-    Write ONE realistic question that can be answered using ONLY the above span or nearby context in the article.
+Strict rules:
+- The question must be fully answerable using explicit text inside <span>.
+- Include at least two concrete anchors from the span (e.g., a PERSON/ORG + a DATE/NUMBER/LOCATION).
+- The expected answer must be a short factual span (name, date, number, location, or short phrase).
+- Do NOT ask for summaries, opinions, reasons, implications, or unstated facts.
+- Do NOT introduce new entities or outside knowledge.
+- The question must be one sentence, 12–30 words long.
+- Double-check that the correct answer is clearly visible in <span>.
 
-    Strict rules (follow ALL carefully):
-    - The question must be fully answerable from the span (or immediate surrounding context), with no external knowledge required.
-    - Include at least two concrete anchors from the article (e.g., a PERSON/ORG and a DATE/NUMBER/LOCATION).
-    - The expected answer must be a short factual span (name, date, figure, place, or short clause) — not a summary or opinion.
-    - Do not ask vague questions such as: main idea, impact, implications, significance, or why is this important.
-    - Do not ask about information that is not explicitly stated in the text.
-    - The question must be one sentence, 12–30 words long.
-    - Double-check that the correct answer is visible in the given span.
+Output format:
+<box>your question here</box>
+Only output the question, nothing else.
 
-    Output format:
-    <box>your question here</box>
-    Only output the question, nothing else.
     """
 
     print("Generating retrieval queries...")
