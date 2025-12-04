@@ -12,8 +12,8 @@ if __name__ == '__main__':
                        help="Embedding provider type")
     parser.add_argument("--embedding_model", type=str, default="sentence-transformers/all-MiniLM-L6-v2",
                        help="Embedding model name")
-    parser.add_argument("--vector_search_provider", type=str, default="faiss",
-                       choices=["faiss", "opensearch"],
+    parser.add_argument("--vector_search_provider", type=str, default="hybrid",
+                       choices=["faiss", "opensearch", "hybrid"],
                        help="Vector search provider type")
     parser.add_argument("--aws_region", type=str, default=None,
                        help="AWS region (defaults to AWS_REGION env var or us-east-1)")
@@ -27,6 +27,11 @@ if __name__ == '__main__':
                        help="RAG database name")
     parser.add_argument("--num_articles", type=int, default=5000,
                        help="Number of articles to add")
+    parser.add_argument("--sparse_type", type=str, default="bm25",
+                       choices=["tfidf", "bm25"],
+                       help="Sparse backend for hybrid search")
+    parser.add_argument("--hybrid_alpha", type=float, default=0.5,
+                       help="Weight for sparse scores when using hybrid search")
     args = parser.parse_args()
     
     # Get AWS region
@@ -69,13 +74,15 @@ if __name__ == '__main__':
     
     vector_search_provider = create_vector_search_provider(
         provider_type=args.vector_search_provider,
+        embedding_provider=embedding_provider,
         dimension=actual_dimension,
         endpoint=args.opensearch_endpoint,
-        region_name=aws_region
+        region_name=aws_region,
+        sparse_type=args.sparse_type,
+        alpha=args.hybrid_alpha
     )
 
     my_rag = rag.RAG(
-        embedding_model=embedding_provider,
         rag_searcher=vector_search_provider,
         cache_size=0, # don't need cache size in the init
         db_dir=args.db_dir,
