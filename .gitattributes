@@ -1,0 +1,6 @@
+data/base_chunk/docs.sqlite filter=lfs diff=lfs merge=lfs -text
+data/base_chunk/index filter=lfs diff=lfs merge=lfs -text
+data/overlap/docs.sqlite filter=lfs diff=lfs merge=lfs -text
+data/overlap/index filter=lfs diff=lfs merge=lfs -text
+data/semantic_chunk/docs.sqlite filter=lfs diff=lfs merge=lfs -text
+data/semantic_chunk/index filter=lfs diff=lfs merge=lfs -text
