@@ -11,7 +11,7 @@ class ChunkManager:
         self,
         mode: str,
         embedder: Optional[SentenceTransformer] = None,
-        semantic_threshold: float = 0.4,
+        semantic_threshold: float = 0.2,
     ):
         """
         :param mode: "base", "overlap", or "semantic"
@@ -23,7 +23,8 @@ class ChunkManager:
         self.semantic_threshold = semantic_threshold
 
         if self.mode == "semantic" and self.embedder is None:
-            raise ValueError("semantic mode requires a SentenceTransformer embedder.")
+            self.embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            # raise ValueError("semantic mode requires a SentenceTransformer embedder.")
 
     # Splitting sentences
     def split_into_sentences(self, text: str):
@@ -104,7 +105,8 @@ class ChunkManager:
 
             return chunks
 
-        if self.mode == "semantic":
+        if "semantic" in self.mode:
+            overlap_tokens = overlap_tokens if 'overlap' in self.mode else 0
             chunks: List[str] = []
             if not sentences:
                 return chunks

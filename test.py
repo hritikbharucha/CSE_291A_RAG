@@ -27,40 +27,90 @@ def clean_letters_only(text: str) -> str:
     cleaned = re.sub(r'\s+', ' ', letters_only).strip()
     return cleaned
 
-def test_retrieval_accuracy():
+def normalize_for_containment(text: str) -> str:
+    """Normalize text for containment checks (lowercase, no whitespace)."""
+    if not text:
+        return ""
+    return re.sub(r'\s+', '', str(text)).lower()
+
+def tokenize_to_set(text: str) -> set:
+    """Tokenize text into a set of alphanumeric lowercase tokens."""
+    if not text:
+        return set()
+    return set(re.findall(r'\w+', str(text).lower()))
+
+def token_iou(tokens_a: set, tokens_b: set) -> float:
+    """Compute IoU between two token sets."""
+    if not tokens_a or not tokens_b:
+        return 0.0
+    inter = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(inter) / len(union) if union else 0.0
+
+def chunk_match_score(target_tokens: set, target_norm: str, text: str) -> float:
+    """Return max of token IoU and full-containment indicator."""
+    tokens = tokenize_to_set(text)
+    norm = normalize_for_containment(text)
+    iou = token_iou(target_tokens, tokens)
+    contains = 1.0 if norm and target_norm and norm in target_norm else 0.0
+    return max(iou, contains)
+
+def test_retrieval_accuracy(topk: int = 5):
     df = pd.read_json(args.query_file, lines=True)
     chunk_top1_acc = 0
-    chunk_top5_acc = 0
+    chunk_topk_acc = 0
     article_top1_acc = 0
-    article_top5_acc = 0
+    article_topk_acc = 0
     total = 0
     pbar = tqdm.tqdm(df.iterrows(), total=len(df))
     for index, row in pbar:
         query = row["question"]
         gt_idx = row["id"]  # Database IDs are 1-indexed, no need to subtract 1
         gt_article_id = row["article_id"]
+        gt_chunk_text = row.get("chunk", "")
+        target_tokens = tokenize_to_set(gt_chunk_text) if args.chunk_text_match else set()
+        target_norm = normalize_for_containment(gt_chunk_text) if args.chunk_text_match else ""
 
         top1_rslts = my_rag.retrieve([query], 1)
-        top5_rslts = my_rag.retrieve([query], 5)
+        topk_rslts = my_rag.retrieve([query], topk)
 
-        chunk_top1_acc += 1 if gt_idx in top1_rslts.keys() else 0
-        chunk_top5_acc += 1 if gt_idx in top5_rslts.keys() else 0
+        if args.chunk_text_match:
+            max_score_top1 = max(
+                (chunk_match_score(target_tokens, target_norm, top1_rslts[key]["doc"]) for key in top1_rslts),
+                default=0.0,
+            )
+            max_score_topk = max(
+                (chunk_match_score(target_tokens, target_norm, topk_rslts[key]["doc"]) for key in topk_rslts),
+                default=0.0,
+            )
+            chunk_top1_acc += 1 if max_score_top1 >= args.chunk_iou_threshold else 0
+            chunk_topk_acc += 1 if max_score_topk >= args.chunk_iou_threshold else 0
+        else:
+            chunk_top1_acc += 1 if gt_idx in top1_rslts.keys() else 0
+            chunk_topk_acc += 1 if gt_idx in topk_rslts.keys() else 0
 
         top1_article_id = [top1_rslts[key]["article_id"] for key in top1_rslts]
-        top5_article_id = [top5_rslts[key]["article_id"] for key in top5_rslts]
+        topk_article_id = [topk_rslts[key]["article_id"] for key in topk_rslts]
         article_top1_acc += 1 if gt_article_id in top1_article_id else 0
-        article_top5_acc += 1 if gt_article_id in top5_article_id else 0
+        article_topk_acc += 1 if gt_article_id in topk_article_id else 0
 
         total += 1
 
         # print(f"gt_id: {gt_idx}, query: {query}, top1_rslt: {top1_rslts.keys()}, top5_rslts: {top5_rslts.keys()}")
         # print(f"gt_article_id: {gt_article_id}, query: {query}, "
         #       f"article_top1_rslt: {top1_article_id}, article_top5_rslts: {top5_article_id}")
-        pbar.set_description(
-            desc=f"top1_acc: {chunk_top1_acc/total:.4f}, top5_acc: {chunk_top5_acc/total:.4f} "
-                 f"top1_acc_article: {article_top1_acc/total:.4f}, top5_acc_article: {article_top5_acc/total:.4f}")
+        desc = (
+            f"top1_acc: {chunk_top1_acc/total:.4f}, top{topk}_acc: {chunk_topk_acc/total:.4f} "
+            f"top1_acc_article: {article_top1_acc/total:.4f}, top{topk}_acc_article: {article_topk_acc/total:.4f}"
+        )
+        pbar.set_description(desc=desc)
 
-    print(f"Top-1 acc: {chunk_top1_acc / len(df)}, Top-5 acc: {chunk_top5_acc / len(df)}, Article Top-1 acc: {article_top1_acc/total}, Top-5 acc: {article_top5_acc/total}")
+    print(
+        f"Top-1 acc: {chunk_top1_acc / len(df)}, "
+        f"Top-{topk} acc: {chunk_topk_acc / len(df)}, "
+        f"Article Top-1 acc: {article_top1_acc/total}, "
+        f"Article Top-{topk} acc: {article_topk_acc/total}"
+    )
 
 def test_retrieval_quality_baseline():
     print(f"Loading LLM model {args.llm}...")
@@ -221,6 +271,23 @@ if __name__ == '__main__':
     parser.add_argument("--max_new_tokens", type=int, default=120)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.95)
+    parser.add_argument(
+        "--chunk_text_match",
+        action="store_true",
+        help="When set, treat a retrieval as correct if its text overlaps the ground truth 'chunk' above the IoU/containment threshold.",
+    )
+    parser.add_argument(
+        "--chunk_iou_threshold",
+        type=float,
+        default=0.5,
+        help="IoU threshold (0-1) for considering retrieved chunk text a correct match when --chunk_text_match is set.",
+    )
+    parser.add_argument(
+        "--topk",
+        type=int,
+        default=5,
+        help="Top-k to use when evaluating retrieval accuracy.",
+    )
     
     # Provider arguments
     parser.add_argument("--embedding_provider", type=str, default="sentence_transformer",
@@ -295,9 +362,10 @@ if __name__ == '__main__':
     )
 
     if args.mode == "retrieval_accuracy":
-        test_retrieval_accuracy()
+        topk = max(1, args.topk)
+        test_retrieval_accuracy(topk=topk)
     elif args.mode == "retrieval_quality":
-        test_retrieval_quality_baseline()
+        # test_retrieval_quality_baseline()
         test_retrieval_quality()
     else:
         raise Exception(f"Unknown mode {args.mode}")

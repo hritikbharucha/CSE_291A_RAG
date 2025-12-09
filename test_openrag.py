@@ -9,6 +9,35 @@ from rag.provider_factory import create_embedding_provider, create_vector_search
 from rag.aws_config import get_aws_region, get_bedrock_embedding_model
 from pathlib import Path
 from typing import List, Dict, Any
+import re
+
+def normalize_for_containment(text: str) -> str:
+    """Normalize text for containment checks (lowercase, no whitespace)."""
+    if not text:
+        return ""
+    return re.sub(r'\s+', '', str(text)).lower()
+
+def tokenize_to_set(text: str) -> set:
+    """Tokenize text into a set of alphanumeric lowercase tokens."""
+    if not text:
+        return set()
+    return set(re.findall(r'\w+', str(text).lower()))
+
+def token_iou(tokens_a: set, tokens_b: set) -> float:
+    """Compute IoU between two token sets."""
+    if not tokens_a or not tokens_b:
+        return 0.0
+    inter = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(inter) / len(union) if union else 0.0
+
+def chunk_match_score(target_tokens: set, target_norm: str, text: str) -> float:
+    """Return max of token IoU and full-containment indicator."""
+    tokens = tokenize_to_set(text)
+    norm = normalize_for_containment(text)
+    iou = token_iou(target_tokens, tokens)
+    contains = 1.0 if norm and target_norm and norm in target_norm else 0.0
+    return max(iou, contains)
 
 
 def calculate_retrieval_metrics(retrieved_lists: List[List[str]], 
@@ -162,6 +191,8 @@ def run_openrag_eval(args):
             gt_chunk_text = str(row["chunk"])
         except (KeyError, ValueError, TypeError):
             gt_chunk_text = ""
+        target_tokens = tokenize_to_set(gt_chunk_text) if args.chunk_text_match else set()
+        target_norm = normalize_for_containment(gt_chunk_text) if args.chunk_text_match else ""
         
         retrieved = my_rag.retrieve([query], args.top_k)
         
@@ -178,7 +209,18 @@ def run_openrag_eval(args):
         retrieved_lists.append([str(i) for i in retrieved_ids])
         gold_lists.append([str(gt_chunk_id)] if gt_chunk_id is not None else [])
         
-        if gt_chunk_id is not None:
+        if args.chunk_text_match:
+            max_score_top1 = max(
+                (chunk_match_score(target_tokens, target_norm, text) for text in retrieved_texts[:1]),
+                default=0.0,
+            )
+            max_score_top5 = max(
+                (chunk_match_score(target_tokens, target_norm, text) for text in retrieved_texts[:5]),
+                default=0.0,
+            )
+            chunk_top1_acc += 1 if max_score_top1 >= args.chunk_iou_threshold else 0
+            chunk_top5_acc += 1 if max_score_top5 >= args.chunk_iou_threshold else 0
+        elif gt_chunk_id is not None:
             chunk_top1_acc += 1 if gt_chunk_id in retrieved_ids[:1] else 0
             chunk_top5_acc += 1 if gt_chunk_id in retrieved_ids[:5] else 0
         
@@ -209,7 +251,7 @@ def run_openrag_eval(args):
     
     print("RETRIEVAL EVALUATION RESULTS")
     
-    print("\n--- Chunk-Level Accuracy (ID Match) ---")
+    print("\n--- Chunk-Level Accuracy ---")
     print(f"Top-1 Accuracy: {chunk_top1_acc / total:.4f}")
     print(f"Top-5 Accuracy: {chunk_top5_acc / total:.4f}")
     
@@ -284,6 +326,17 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="LRU cache size for RAG system (0 disables caching)",
+    )
+    parser.add_argument(
+        "--chunk_text_match",
+        action="store_true",
+        help="When set, treat a retrieval as correct if its text overlaps the ground truth 'chunk' above the IoU/containment threshold.",
+    )
+    parser.add_argument(
+        "--chunk_iou_threshold",
+        type=float,
+        default=0.5,
+        help="IoU threshold (0-1) for considering retrieved chunk text a correct match when --chunk_text_match is set.",
     )
     parser.add_argument(
         "--embedding_provider",

@@ -11,6 +11,12 @@ from rag.aws_config import get_aws_region, get_bedrock_embedding_model, get_bedr
 from pathlib import Path
 import re
 
+def normalize_for_containment(text: str) -> str:
+    """Normalize text for containment checks (lowercase, no whitespace)."""
+    if not text:
+        return ""
+    return re.sub(r'\s+', '', str(text)).lower()
+
 def extract_box(text: str) -> str:
     matches = re.findall(r"<box>\s*(.*?)\s*</box>", text, flags=re.DOTALL | re.IGNORECASE)
     if matches:
@@ -69,6 +75,8 @@ def prepare_multihop_retrieval_data_from_dataset(args):
     print("Preparing retrieval data for MultiHop-RAG evaluation using official dataset")
     
     my_rag = _initialize_rag_system(args)
+    if args.chunk_text_match:
+        print("Chunk text containment check enabled, but official MultiHop-RAG dataset does not include ground truth 'chunk' text; skipping this check.")
     
     # load MultiHop-RAG queries from the official dataset
     multihop_query_file = os.path.join(args.multihop_root, "dataset", "MultiHopRAG.json")
@@ -492,6 +500,11 @@ if __name__ == "__main__":
         type=int,
         default=5,
         help="Number of documents to retrieve per query",
+    )
+    parser.add_argument(
+        "--chunk_text_match",
+        action="store_true",
+        help="When set, treat a retrieval as correct if its text overlaps the ground truth 'chunk' above the IoU/containment threshold.",
     )
     parser.add_argument(
         "--cache_size",

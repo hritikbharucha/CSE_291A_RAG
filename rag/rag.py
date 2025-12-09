@@ -138,7 +138,7 @@ class RAG:
         if self.query_refiner is not None:
             queries = [self.query_refiner.get_refined_query(query) for query in queries]
 
-        db_topk = top_k if self.reranker is None else 30
+        db_topk = top_k if self.reranker is None else 50
         distances, indices = self.rag_searcher.retrieve(queries, db_topk)
 
         # Convert numpy array to list of integers for hashability

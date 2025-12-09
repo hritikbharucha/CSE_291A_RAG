@@ -57,7 +57,7 @@ def parse_formatted_chunk(text: str):
     return article_title, chunk
 
 class DocStore:
-    def __init__(self, db_path: str = "data/docs.sqlite", chunk_mode="base"):
+    def __init__(self, db_path: str = "data/docs.sqlite", chunk_mode="overlap"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.chunk_manager = ChunkManager(chunk_mode)
